@@ -35,7 +35,7 @@ class IqiyiIE(InfoExtractor):
     IE_NAME = 'iqiyi'
     IE_DESC = '爱奇艺'
 
-    _VALID_URL = r'https?://(?:(?:[^.]+\.)?iqiyi\.com|www\.pps\.tv)/.+\.html'
+    _VALID_URL = r'https?://(?:(?:[^.]+\.)?iqiyi\.com|(?:[^.]+\.)?pps\.tv)/.+\.html'
 
     _TESTS = [{
         'url': 'http://www.iqiyi.com/v_19rrojlavg.html',
@@ -88,6 +88,17 @@ class IqiyiIE(InfoExtractor):
     }, {
         'url': 'http://www.pps.tv/w_19rrbav0ph.html',
         'only_matching': True,
+    }, {
+        # Modern SPA page — falls back to mobile __INITIAL_STATE__
+        'url': 'https://www.iqiyi.com/v_1pauc36ywdk.html',
+        'info_dict': {
+            'id': '33cb14a879272112485e136070e08ec5',
+            'ext': 'mp4',
+            'title': '昨夜将至第1集',
+            'description': str,
+            'duration': 2609,
+            'tags': ['悬疑', '情感悬疑', '犯罪'],
+        },
     }]
 
     _FORMATS_MAP = {
@@ -118,6 +129,21 @@ class IqiyiIE(InfoExtractor):
             f'http://cache.m.iqiyi.com/jp/tmts/{tvid}/{video_id}/',
             video_id, transform_source=lambda s: remove_start(s, 'var tvInfoJs='),
             query=params, headers=self.geo_verification_headers())
+
+    def _extract_mobile_state(self, url):
+        mobile_url = re.sub(
+            r'://(?:www|yule|vip|live|list)\.', '://m.',
+            url.replace('pps.tv/', 'iqiyi.com/'))
+        webpage = self._download_webpage(
+            mobile_url, 'temp_id',
+            note='Downloading mobile page',
+            errnote='Failed to download mobile page',
+            headers={'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
+                                  'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'})
+        return self._search_json(
+            r'window\.__INITIAL_STATE__\s*=',
+            webpage, 'initial state', 'temp_id',
+            end_pattern=r';')
 
     def _extract_playlist(self, webpage):
         PAGE_SIZE = 50
@@ -152,24 +178,7 @@ class IqiyiIE(InfoExtractor):
 
         return self.playlist_result(entries, album_id, album_title)
 
-    def _real_extract(self, url):
-        webpage = self._download_webpage(
-            url, 'temp_id', note='download video page')
-
-        # There's no simple way to determine whether an URL is a playlist or not
-        # Sometimes there are playlist links in individual videos, so treat it
-        # as a single video first
-        tvid = self._search_regex(
-            r'data-(?:player|shareplattrigger)-tvid\s*=\s*[\'"](\d+)', webpage, 'tvid', default=None)
-        if tvid is None:
-            playlist_result = self._extract_playlist(webpage)
-            if playlist_result:
-                return playlist_result
-            raise ExtractorError('Can\'t find any video')
-
-        video_id = self._search_regex(
-            r'data-(?:player|shareplattrigger)-videoid\s*=\s*[\'"]([a-f\d]+)', webpage, 'video_id')
-
+    def _extract_formats(self, tvid, video_id):
         formats = []
         for _ in range(5):
             raw_data = self.get_raw_data(tvid, video_id)
@@ -198,15 +207,84 @@ class IqiyiIE(InfoExtractor):
 
             self._sleep(5, video_id)
 
-        title = (get_element_by_id('widget-videotitle', webpage)
-                 or clean_html(get_element_by_attribute('class', 'mod-play-tit', webpage))
-                 or self._html_search_regex(r'<span[^>]+data-videochanged-title="word"[^>]*>([^<]+)</span>', webpage, 'title'))
+        return formats
 
-        return {
+    def _real_extract(self, url):
+        webpage = self._download_webpage(
+            url, 'temp_id', note='download video page')
+
+        # There's no simple way to determine whether an URL is a playlist or not
+        # Sometimes there are playlist links in individual videos, so treat it
+        # as a single video first
+        tvid = self._search_regex(
+            r'data-(?:player|shareplattrigger)-tvid\s*=\s*[\'"](\d+)', webpage, 'tvid', default=None)
+        if tvid is None:
+            playlist_result = self._extract_playlist(webpage)
+            if playlist_result:
+                return playlist_result
+            # Modern SPA pages have no server-side data attributes.
+            # Fall back to the mobile page which embeds __INITIAL_STATE__.
+            initial_state = self._extract_mobile_state(url)
+            video_info = traverse_obj(
+                initial_state, ('play', 'videoInfo'), expected_type=dict)
+            if not video_info:
+                raise ExtractorError('Can\'t find any video')
+            tvid = str_or_none(video_info.get('tvid'))
+            video_id = str_or_none(video_info.get('vid'))
+            if not tvid or not video_id:
+                raise ExtractorError('Can\'t find any video')
+            is_mobile = True
+        else:
+            video_id = self._search_regex(
+                r'data-(?:player|shareplattrigger)-videoid\s*=\s*[\'"]([a-f\d]+)', webpage, 'video_id')
+            video_info = None
+            is_mobile = False
+
+        formats = self._extract_formats(tvid, video_id)
+
+        if is_mobile and video_info:
+            title = video_info.get('videoName')
+            description = video_info.get('desc')
+            duration = int_or_none(video_info.get('duration'))
+            thumbnail = urljoin('https:', video_info.get('imageUrl')) if video_info.get('imageUrl') else None
+            tags = [t.strip() for t in video_info.get('tags', '').split(',') if t.strip()] if video_info.get('tags') else None
+            categories = [video_info.get('channelName')] if video_info.get('channelName') else None
+            series = traverse_obj(
+                initial_state, ('play', 'albumInfo', 'albumName'), expected_type=str)
+            episode_number = int_or_none(video_info.get('order'))
+        else:
+            title = (get_element_by_id('widget-videotitle', webpage)
+                     or clean_html(get_element_by_attribute('class', 'mod-play-tit', webpage))
+                     or self._html_search_regex(
+                         r'<span[^>]+data-videochanged-title="word"[^>]*>([^<]+)</span>', webpage, 'title'))
+            description = None
+            duration = None
+            thumbnail = None
+            tags = None
+            categories = None
+            series = None
+            episode_number = None
+
+        info = {
             'id': video_id,
             'title': title,
             'formats': formats,
         }
+        if description:
+            info['description'] = description
+        if duration:
+            info['duration'] = duration
+        if thumbnail:
+            info['thumbnail'] = thumbnail
+        if tags:
+            info['tags'] = tags
+        if categories:
+            info['categories'] = categories
+        if series:
+            info['series'] = series
+        if episode_number:
+            info['episode_number'] = episode_number
+        return info
 
 
 class IqIE(InfoExtractor):

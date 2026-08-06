@@ -1458,6 +1458,7 @@ from .pornhub import (
 from .pornotube import PornotubeIE
 from .pornovoisines import PornoVoisinesIE
 from .pornoxo import PornoXOIE
+from .porn91 import Porn91IE
 from .pr0gramm import Pr0grammIE
 from .prankcast import (
     PrankCastIE,

@@ -305,6 +305,7 @@ class BilibiliBaseIE(InfoExtractor):
 
 class BiliBiliIE(BilibiliBaseIE):
     _VALID_URL = r'https?://(?:www\.)?bilibili\.com/(?:video/|festival/[^/?#]+\?(?:[^#]*&)?bvid=)(?P<prefix>[aAbB][vV])(?P<id>[^/?#&]+)'
+    _LOGIN_URL = 'https://passport.bilibili.com/login'
 
     _TESTS = [{
         'url': 'https://www.bilibili.com/video/BV13x41117TL',
