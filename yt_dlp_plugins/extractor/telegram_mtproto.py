@@ -106,7 +106,7 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
         MessageMediaDocument,
     )
 
-    kwargs = dict(connection_retries=5, timeout=30, request_retries=5)
+    kwargs = dict(connection_retries=5, timeout=300, request_retries=5)
     if proxy:
         kwargs['proxy'] = proxy
 
@@ -180,17 +180,11 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
             info['height'] = height
             info['filesize'] = doc.size
 
-            # 下载
-            if output_path:
-                output_dir = _Path(output_path).parent
-                output_dir.mkdir(parents=True, exist_ok=True)
-                file_path = await client.download_media(message, file=output_path)
-                info['filepath'] = file_path
-            else:
-                info['_type'] = 'video'
-                info['ext'] = doc.mime_type.split('/')[-1] if doc.mime_type else 'mp4'
-                # CDN 直链（如果有）
-                info['url'] = f'https://cdn{doc.dc_id}.telesco.pe/file/{filename}'
+            # 返回 CDN 直链给 yt-dlp（走 HTTP/SOCKS5 代理），避免 MTProto 直连被墙
+            cdn_url = f'https://cdn{doc.dc_id}.telesco.pe/file/{filename}'
+            info['_type'] = 'video'
+            info['ext'] = doc.mime_type.split('/')[-1] if doc.mime_type else 'mp4'
+            info['url'] = cdn_url
 
     finally:
         await client.disconnect()
