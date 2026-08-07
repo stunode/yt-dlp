@@ -110,18 +110,10 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
     if proxy:
         kwargs['proxy'] = proxy
 
-    # 检查 session 是否有效：
-    if await client.is_user_authorized():
-        self.to_screen('Telegram MTProto session 有效')
-    else:
-        raise ExtractorError(
-            'Telegram session 无效或已过期。请在本地运行 '
-            'telethon_telegram_downloader.py 重新登录，或更新 tg_session.json。',
-            expected=True)
-
     client = TelegramClient(StringSession(session_string), api_id, api_hash, **kwargs)
     await client.connect()
 
+    # 检查 session 是否有效
     if not await client.is_user_authorized():
         await client.disconnect()
         raise ExtractorError('Telegram MTProto session 无效或已过期', expected=True)
