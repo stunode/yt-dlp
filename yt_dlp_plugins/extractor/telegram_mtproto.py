@@ -87,7 +87,17 @@ def _build_string_session(session_json_path):
 
 
 def _parse_telegram_url(url):
-    """解析 Telegram URL → (channel_username, message_id)"""
+    """解析 Telegram URL → (channel_username, message_id)
+    支持格式:
+        - t.me/c/123456789/1234  (私有频道，c/ 后面是频道数字 ID)
+        - t.me/username/1234     (公开频道)
+        - @username/1234
+    """
+    # 私有频道: t.me/c/<channel_id>/<msg_id>
+    m = re.match(r'(?:https?://)?t\.me/c/(\d+)/(\d+)', url)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    # 公开频道
     for pattern in [r'(?:https?://)?t\.me/([^/]+)/(\d+)', r'@([^/]+)/(\d+)']:
         m = re.match(pattern, url)
         if m:
@@ -104,6 +114,7 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
         DocumentAttributeVideo,
         DocumentAttributeFilename,
         MessageMediaDocument,
+        PeerChannel,
     )
 
     kwargs = dict(connection_retries=5, timeout=300, request_retries=5)
@@ -122,7 +133,11 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
     file_path = None
 
     try:
-        entity = await client.get_entity(channel_id)
+        # 私有频道：channel_id 是整数，需要用 PeerChannel
+        if isinstance(channel_id, int):
+            entity = PeerChannel(channel_id)
+        else:
+            entity = await client.get_entity(channel_id)
         message = await client.get_messages(entity, ids=int(msg_id))
 
         if not message or not message.media:
@@ -172,11 +187,18 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
             info['height'] = height
             info['filesize'] = doc.size
 
-            # 返回 CDN 直链给 yt-dlp（走 HTTP/SOCKS5 代理），避免 MTProto 直连被墙
-            cdn_url = f'https://cdn{doc.dc_id}.telesco.pe/file/{filename}'
-            info['_type'] = 'video'
-            info['ext'] = doc.mime_type.split('/')[-1] if doc.mime_type else 'mp4'
-            info['url'] = cdn_url
+            # 下载文件
+            if output_path:
+                output_dir = _Path(output_path).parent
+                output_dir.mkdir(parents=True, exist_ok=True)
+                file_path = await client.download_media(message, file=output_path)
+                info['filepath'] = file_path
+            else:
+                # 无 output_path 时返回 CDN 直链
+                cdn_url = f'https://cdn{doc.dc_id}.telesco.pe/file/{filename}'
+                info['_type'] = 'video'
+                info['ext'] = doc.mime_type.split('/')[-1] if doc.mime_type else 'mp4'
+                info['url'] = cdn_url
 
     finally:
         await client.disconnect()
