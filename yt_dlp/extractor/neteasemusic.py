@@ -332,8 +332,8 @@ class NetEaseMusicAlbumIE(NetEaseMusicBaseIE):
         'info_dict': {
             'id': '220780',
             'title': 'B\'Day',
-            'upload_date': '20060904',
-            'description': 'md5:71a74e1d8f392d88cf1bbe48879ad0b0',
+            'upload_date': '20060830',
+            'description': r're:玩美风暴',
             'thumbnail': r're:^http.*\.jpg',
         },
         'playlist_count': 23,
@@ -341,20 +341,18 @@ class NetEaseMusicAlbumIE(NetEaseMusicBaseIE):
 
     def _real_extract(self, url):
         album_id = self._match_id(url)
-        webpage = self._download_webpage(f'https://music.163.com/album?id={album_id}', album_id)
 
-        songs = self._search_json(
-            r'<textarea[^>]+\bid="song-list-pre-data"[^>]*>', webpage, 'metainfo', album_id,
-            end_pattern=r'</textarea>', contains_pattern=r'\[(?s:.+)\]')
-        metainfo = {
-            'title': self._og_search_property('title', webpage, 'title', fatal=False),
-            'description': self._html_search_regex(
-                (rf'<div[^>]+\bid="album-desc-{suffix}"[^>]*>(.*?)</div>' for suffix in ('more', 'dot')),
-                webpage, 'description', flags=re.S, fatal=False),
-            'thumbnail': self._og_search_property('image', webpage, 'thumbnail', fatal=False),
-            'upload_date': unified_strdate(self._html_search_meta('music:release_date', webpage, 'date', fatal=False)),
-        }
-        return self.playlist_result(self._get_entries(songs), album_id, **metainfo)
+        info = self._query_api(
+            f'v1/album/{album_id}', album_id, note='Downloading album info')
+
+        metainfo = traverse_obj(info, ('album', {
+            'title': ('name', {str}),
+            'description': (('description', 'briefDesc'), {str}, filter),
+            'thumbnail': ('picUrl', {url_or_none}),
+            'upload_date': ('publishTime', {int_or_none(scale=1000)}, {strftime_or_none}),
+        }), get_all=False)
+
+        return self.playlist_result(self._get_entries(info, 'songs'), album_id, **metainfo)
 
 
 class NetEaseMusicSingerIE(NetEaseMusicBaseIE):
