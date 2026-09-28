@@ -33,6 +33,7 @@ import json
 import os
 import re
 import struct
+import sys
 import time
 from pathlib import Path as _Path
 
@@ -103,6 +104,34 @@ def _parse_telegram_url(url):
         if m:
             return m.group(1), int(m.group(2))
     return None, None
+
+
+def _make_progress_cb():
+    """构造节流的下载进度回调，每 ~5 秒（或完成时）向 stderr 打一行进度。
+
+    原因：Telethon 的 download_media 在提取阶段运行，期间 yt-dlp 不产生任何输出，
+    上层（Java DownloadService）的 idle-timeout 会误判「卡死」并强制终止。
+    周期性打印进度可让 idle-timeout 正确识别「仍在下载」。stderr 需显式 flush，
+    否则管道下 Python 块缓冲会一直憋住不落盘。
+    """
+    last = {'t': 0.0}
+
+    def cb(current, total):
+        now = time.time()
+        if now - last['t'] < 5 and current < total:
+            return
+        last['t'] = now
+        if total:
+            pct = current * 100.0 / total
+            sys.stderr.write(
+                f'[telegram:embed] MTProto download: '
+                f'{current / 1048576:.1f}/{total / 1048576:.1f} MiB ({pct:.0f}%)\n')
+        else:
+            sys.stderr.write(
+                f'[telegram:embed] MTProto download: {current / 1048576:.1f} MiB\n')
+        sys.stderr.flush()
+
+    return cb
 
 
 async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash,
@@ -191,7 +220,8 @@ async def _mtproto_download(channel_id, msg_id, session_string, api_id, api_hash
             if output_path:
                 output_dir = _Path(output_path).parent
                 output_dir.mkdir(parents=True, exist_ok=True)
-                file_path = await client.download_media(message, file=output_path)
+                file_path = await client.download_media(
+                    message, file=output_path, progress_callback=_make_progress_cb())
                 info['filepath'] = file_path
             else:
                 # 无 output_path 时返回 CDN 直链

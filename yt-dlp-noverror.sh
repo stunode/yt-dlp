@@ -4,7 +4,7 @@
 # 启用 --enable-file-urls 允许 MTProto 降级路径返回的本地文件
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-exec "${PYTHON:-python3}" \
+exec "${PYTHON:-python3.12}" \
     -W default \
     "$SCRIPT_DIR/yt_dlp/__main__.py" \
     --plugin-dirs "$SCRIPT_DIR" \
